@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
 import pandas as pd
+from datetime import datetime
 
 
 # Loads the environment variables from the .env file
@@ -14,14 +15,15 @@ load_dotenv()
 # Gets the POLYGON_API KEY from the .env file
 API_KEY = os.getenv("POLYGON_API_KEY")
 
-
-
 # Limit for each request page
 LIMIT = 1000
 
 # Create engine to communicate with snowflake
 
 def run_stock_job():
+
+    # Add the date when the stocks were extracted
+    DS = datetime.now().strftime('%Y-%m-%d')
     # URL to get the ticker from the Polygon API
     url = f"https://api.polygon.io/v3/reference/tickers?market=stocks&active=true&order=asc&limit={LIMIT}&sort=ticker&apiKey={API_KEY}"
 
@@ -37,8 +39,11 @@ def run_stock_job():
     # Extract the data keys that are going to be our Snowflake table columns
     headers = list(data['results'][0].keys())
 
+    # Add the new_column
+    headers.append('ds')
     # Loop to add each ticker from data to the ticker list
     for ticker in data['results']:
+        ticker['ds'] = DS
         tickers_rows.append(ticker)
 
 
@@ -48,6 +53,7 @@ def run_stock_job():
 
         # Loop to add each ticker from data to the ticker list
         for ticker in data['results']:
+            ticker['ds'] = DS
             tickers_rows.append(ticker)
 
         # HTTP GET request to the Polygon API
@@ -57,7 +63,7 @@ def run_stock_job():
         data = response.json()
 
         # time to be idle in order to be able to not exceed requests per minute
-        time.sleep(10)
+        time.sleep(15)
 
     load_table_snowflake(tickers_rows, headers)
     
@@ -100,22 +106,22 @@ def load_table_snowflake(rows, headers):
         # Create DataFrame and sanitize column names
         df_tickers = pd.DataFrame(rows, columns=headers)
         
-        # Uppercase columns names
-        columns = []
+        #Uppercase columns names to macth with Snowflake table's schema
+        columns_uppercase = []
         for col in headers:
-            columns.append(col.upper())
+            columns_uppercase.append(col.upper())
 
         # Assign columns names to the dataframe
-        df_tickers.columns = columns
+        df_tickers.columns = columns_uppercase
 
         # Load dataframe into Snowflake using write_pandas
-        result = write_pandas(
+        success, nchunks, nint, _ = write_pandas(
             conn=con,
             df= df_tickers,
             table_name=table_name
         )
 
-        if result[0]:
+        if success:
             print("SUCCEEDED: Dataframe loaded into Snowflake table 'STOCK_TICKERS'")
         else:
             print("FAILED: Dataframe wasn't loaded into Snowflake table 'STOCK_TICKERS'")
